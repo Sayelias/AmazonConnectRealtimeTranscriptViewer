@@ -6,6 +6,7 @@ Deploy a single YAML file and get a live transcript viewer that displays caller 
 
 ## How It Works
 
+
 Amazon Connect Call → Contact Lens → Kinesis → Lambda → DynamoDB → API Gateway → CloudFront Viewer
 
 
