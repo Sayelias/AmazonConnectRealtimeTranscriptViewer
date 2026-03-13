@@ -28,7 +28,7 @@ See the [deployment instructions](#deployment-steps) below — everything is don
 1. An **Amazon Connect instance** with Contact Lens enabled
 2. Your **Connect Instance ID** (looks like: `a1b2c3d4-5678-90ab-cdef-123456789012`)
 3. An **S3 bucket** to store website files
-4. The **tviewer-simple.yml** file and **files/** folder from this package
+4. This repository cloned or downloaded to your computer
 
 ## How to Find Your Connect Instance ID
 
@@ -49,10 +49,9 @@ See the [deployment instructions](#deployment-steps) below — everything is don
 4. Click **Create folder**
 5. Name it `files` and click **Create folder**
 6. Click on the `files` folder
-7. Click **Upload**
-8. Drag and drop all files from the `files/` folder
-9. Click **Upload**
-10. Wait for upload to complete
+7. Download staticFiles.zip from this repo and drop all files into the folder "files" on S3
+8. Click **Upload**
+9. Wait for upload to complete
 
 ### Step 2: Deploy the CloudFormation Stack
 
