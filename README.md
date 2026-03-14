@@ -128,9 +128,11 @@ Agents need permission to see the third-party app in their workspace:
 
 Agents will see the transcript viewer on their next login.
 
-Alternatively you can add it in as an External App in a step by step guide.
+You have it as a 3rd Party app in Agent Workspace.
 
 ![3rd party app](image1.png)
+
+Or incorporate it into a Guide.
 
 ![In a Guide](image2.png)
 
