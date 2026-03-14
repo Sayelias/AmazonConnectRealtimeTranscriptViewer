@@ -94,19 +94,39 @@ If you see **CREATE_FAILED** or **ROLLBACK**, check the **Events** tab for error
 3. Find the row with **CloudFrontURL**
 4. Copy the URL (it will look like: `https://d1234abcd5678.cloudfront.net`)
 
+### Step 5: Add the Viewer to Amazon Connect Agent Workspace
+
+To display the transcript viewer inside the agent's workspace during calls:
+
+1. Log into the **AWS Console**
+2. Go to **Amazon Connect** → Click on your instance
+3. In the left menu, click **Third-party applications**
+4. Click **Add application**
+5. Fill in the details:
+   - **Display name**: `Transcript Viewer` (or any name you prefer)
+   - **Access URL**: Paste the **AgentWorkspaceURL** from the CloudFormation Outputs tab
+     - It will look like: `https://d1234abcd5678.cloudfront.net?embedded=true`
+6. Click **Save**
+
+The transcript viewer will now appear as a tab in the agent workspace during active calls.
+
+### Step 6: Grant Agents Access to the Viewer
+
+Agents need permission to see the third-party app in their workspace:
+
+1. Log into your **Amazon Connect instance** (the admin URL)
+2. In the left menu, go to **Users** → **Security profiles**
+3. Click on the security profile assigned to your agents (e.g. **Agent**)
+4. Scroll down to **Agent Applications**
+5. Find **Transcript Viewer** (or the name you used in Step 5)
+6. Check the box to enable it
+7. Click **Save**
+
+Agents will see the transcript viewer on their next login.
+
 ## Testing
 
 1. Make a test call through your Amazon Connect instance
 2. Open the CloudFront URL in your web browser
 3. You should see transcripts appearing in real-time during the call
-
-## That's It!
-
-Everything is configured automatically:
-- ✅ Kinesis stream for receiving transcripts
-- ✅ Lambda functions for processing
-- ✅ DynamoDB for storing transcripts
-- ✅ API Gateway for serving data
-- ✅ CloudFront website for viewing
-- ✅ Contact Lens automatically configured
 
