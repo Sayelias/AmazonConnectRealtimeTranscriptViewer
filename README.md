@@ -110,6 +110,10 @@ To display the transcript viewer inside the agent's workspace during calls:
 
 The transcript viewer will now appear as a tab in the agent workspace during active calls.
 
+Alternatively you can add it as an External App in a step-by-step guide.
+
+
+
 ### Step 6: Grant Agents Access to the Viewer
 
 Agents need permission to see the third-party app in their workspace:
@@ -123,6 +127,12 @@ Agents need permission to see the third-party app in their workspace:
 7. Click **Save**
 
 Agents will see the transcript viewer on their next login.
+
+Alternatively you can add it in as an External App in a step by step guide.
+
+![Step-by-step guide configuration](image1.jpeg)
+
+![External app setup](image2.png)
 
 ## Testing
 
