@@ -130,7 +130,7 @@ Agents will see the transcript viewer on their next login.
 
 Alternatively you can add it in as an External App in a step by step guide.
 
-![3rd party app](image1.png)
+![3rd party app](image2.png)
 
 ![In a Guide](image2.png)
 
