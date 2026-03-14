@@ -139,6 +139,6 @@ Or incorporate it into a Guide.
 ## Testing
 
 1. Make a test call through your Amazon Connect instance
-2. Open the CloudFront URL in your web browser
+2. Accept the call in Agent Workspace
 3. You should see transcripts appearing in real-time during the call
 
