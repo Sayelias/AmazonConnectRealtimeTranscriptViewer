@@ -1,21 +1,18 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Amazon Connect Real-time Transcript Viewer - Fully Automated
-  Complete solution with Kinesis ingestion, DynamoDB storage, API Gateway,
-  and CloudFront-hosted frontend with Agent Workspace SDK integration.
-  Contact Lens data streaming configured automatically via CloudFormation.
+  Amazon Connect Real-time Transcript Viewer
+  Self-contained solution: Kinesis ingestion, DynamoDB storage, API Gateway,
+  CloudFront frontend, and automatic Contact Lens configuration.
 
 Parameters:
   ConnectInstanceId:
     Type: String
-    Description: Amazon Connect Instance ID (UUID format)
-    AllowedPattern: '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'
+    Description: Amazon Connect Instance ID (UUID format, e.g. a1b2c3d4-5678-90ab-cdef-123456789012)
     MinLength: 36
     MaxLength: 36
 
   SourceBucket:
     Type: String
-    Default: 'bucketname'
     Description: S3 bucket containing frontend files
 
   SourcePrefix:
@@ -24,151 +21,27 @@ Parameters:
     Description: S3 prefix for frontend files
 
 Resources:
-  # KMS Key for DynamoDB encryption
-  DynamoDBKMSKey:
-    Type: AWS::KMS::Key
-    Properties:
-      Description: KMS key for DynamoDB table encryption
-      EnableKeyRotation: true
-      KeyPolicy:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: Enable IAM User Permissions
-            Effect: Allow
-            Principal:
-              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
-            Action: 'kms:*'
-            Resource: '*'
-          - Sid: Allow DynamoDB to use the key
-            Effect: Allow
-            Principal:
-              Service: dynamodb.amazonaws.com
-            Action:
-              - 'kms:Decrypt'
-              - 'kms:DescribeKey'
-              - 'kms:CreateGrant'
-            Resource: '*'
+  # ============================================================
+  # DATA INGESTION PIPELINE
+  # ============================================================
 
-  DynamoDBKMSKeyAlias:
-    Type: AWS::KMS::Alias
+  # Kinesis Data Stream - receives Contact Lens real-time events
+  TranscriptStream:
+    Type: AWS::Kinesis::Stream
     Properties:
-      AliasName: !Sub 'alias/${AWS::StackName}-dynamodb'
-      TargetKeyId: !Ref DynamoDBKMSKey
+      Name: !Sub '${AWS::StackName}-transcript-stream'
+      StreamModeDetails:
+        StreamMode: ON_DEMAND
+      RetentionPeriodHours: 24
+      StreamEncryption:
+        EncryptionType: KMS
+        KeyId: alias/aws/kinesis
 
-  # KMS Key for Lambda environment variables
-  LambdaKMSKey:
-    Type: AWS::KMS::Key
-    Properties:
-      Description: KMS key for Lambda environment variable encryption
-      EnableKeyRotation: true
-      KeyPolicy:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: Enable IAM User Permissions
-            Effect: Allow
-            Principal:
-              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
-            Action: 'kms:*'
-            Resource: '*'
-          - Sid: Allow Lambda to use the key
-            Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action:
-              - 'kms:Decrypt'
-              - 'kms:DescribeKey'
-            Resource: '*'
-
-  LambdaKMSKeyAlias:
-    Type: AWS::KMS::Alias
-    Properties:
-      AliasName: !Sub 'alias/${AWS::StackName}-lambda'
-      TargetKeyId: !Ref LambdaKMSKey
-
-  # KMS Key for S3 encryption
-  S3KMSKey:
-    Type: AWS::KMS::Key
-    Properties:
-      Description: KMS key for S3 bucket encryption
-      EnableKeyRotation: true
-      KeyPolicy:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: Enable IAM User Permissions
-            Effect: Allow
-            Principal:
-              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
-            Action: 'kms:*'
-            Resource: '*'
-          - Sid: Allow S3 to use the key
-            Effect: Allow
-            Principal:
-              Service: s3.amazonaws.com
-            Action:
-              - 'kms:Decrypt'
-              - 'kms:GenerateDataKey'
-            Resource: '*'
-
-  S3KMSKeyAlias:
-    Type: AWS::KMS::Alias
-    Properties:
-      AliasName: !Sub 'alias/${AWS::StackName}-s3'
-      TargetKeyId: !Ref S3KMSKey
-
-  # S3 Bucket for Logging
-  LoggingBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      OwnershipControls:
-        Rules:
-          - ObjectOwnership: BucketOwnerPreferred
-      VersioningConfiguration:
-        Status: Enabled
-      LifecycleConfiguration:
-        Rules:
-          - Id: DeleteOldLogs
-            Status: Enabled
-            ExpirationInDays: 90
-
-  LoggingBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref LoggingBucket
-      PolicyDocument:
-        Statement:
-          - Sid: AWSCloudFrontLogging
-            Effect: Allow
-            Principal:
-              Service: cloudfront.amazonaws.com
-            Action: s3:PutObject
-            Resource: !Sub '${LoggingBucket.Arn}/*'
-            Condition:
-              StringEquals:
-                'AWS:SourceAccount': !Ref 'AWS::AccountId'
-          - Sid: AllowSSLRequestsOnly
-            Effect: Deny
-            Principal: '*'
-            Action: 's3:*'
-            Resource:
-              - !GetAtt LoggingBucket.Arn
-              - !Sub '${LoggingBucket.Arn}/*'
-            Condition:
-              Bool:
-                'aws:SecureTransport': 'false'
-
-  # DynamoDB Table
+  # DynamoDB Table - stores transcript segments
   TranscriptTable:
     Type: AWS::DynamoDB::Table
     Properties:
+      TableName: !Sub '${AWS::StackName}-transcripts'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: contactId
@@ -180,71 +53,9 @@ Resources:
           KeyType: HASH
         - AttributeName: segmentId
           KeyType: RANGE
-      SSESpecification:
-        SSEEnabled: true
-        SSEType: KMS
-        KMSMasterKeyId: !Ref DynamoDBKMSKey
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true
-
-  # Kinesis Data Stream
-  TranscriptStream:
-    Type: AWS::Kinesis::Stream
-    Properties:
-      ShardCount: 1
-      RetentionPeriodHours: 24
-      StreamEncryption:
-        EncryptionType: KMS
-        KeyId: alias/aws/kinesis
-
-  # Dead Letter Queues for Lambda error handling
-  KinesisProcessorDLQ:
-    Type: AWS::SQS::Queue
-    Properties:
-      MessageRetentionPeriod: 1209600  # 14 days
-      KmsMasterKeyId: alias/aws/sqs
-
-  APIHandlerDLQ:
-    Type: AWS::SQS::Queue
-    Properties:
-      MessageRetentionPeriod: 1209600
-      KmsMasterKeyId: alias/aws/sqs
-
-  FrontendDeploymentDLQ:
-    Type: AWS::SQS::Queue
-    Properties:
-      MessageRetentionPeriod: 1209600
-      KmsMasterKeyId: alias/aws/sqs
-
-  # IAM Policies (Managed instead of inline)
-  KinesisProcessorPolicy:
-    Type: AWS::IAM::ManagedPolicy
-    Properties:
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Action:
-              - kinesis:GetRecords
-              - kinesis:GetShardIterator
-              - kinesis:DescribeStream
-              - kinesis:ListShards
-            Resource: !GetAtt TranscriptStream.Arn
-          - Effect: Allow
-            Action:
-              - dynamodb:PutItem
-            Resource: !GetAtt TranscriptTable.Arn
-          - Effect: Allow
-            Action:
-              - sqs:SendMessage
-            Resource: !GetAtt KinesisProcessorDLQ.Arn
-          - Effect: Allow
-            Action:
-              - kms:Decrypt
-              - kms:GenerateDataKey
-            Resource:
-              - !GetAtt DynamoDBKMSKey.Arn
-              - !GetAtt LambdaKMSKey.Arn
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
 
   # IAM Role for Kinesis Processor Lambda
   KinesisProcessorRole:
@@ -259,9 +70,24 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - !Ref KinesisProcessorPolicy
+      Policies:
+        - PolicyName: KinesisAndDynamoDB
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:GetRecords
+                  - kinesis:GetShardIterator
+                  - kinesis:DescribeStream
+                  - kinesis:ListShards
+                Resource: !GetAtt TranscriptStream.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource: !GetAtt TranscriptTable.Arn
 
-  # Kinesis Processor Lambda
+  # Kinesis Processor Lambda - processes Contact Lens events into DynamoDB
   KinesisProcessorFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -271,52 +97,79 @@ Resources:
       Role: !GetAtt KinesisProcessorRole.Arn
       Timeout: 300
       MemorySize: 512
-      ReservedConcurrentExecutions: 10
-      DeadLetterConfig:
-        TargetArn: !GetAtt KinesisProcessorDLQ.Arn
-      KmsKeyArn: !GetAtt LambdaKMSKey.Arn
       Environment:
         Variables:
           TABLE_NAME: !Ref TranscriptTable
+          CONNECT_INSTANCE_ID: !Ref ConnectInstanceId
       Code:
         ZipFile: |
           const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
           const { DynamoDBDocumentClient, PutCommand } = require('@aws-sdk/lib-dynamodb');
-          const dynamoClient = new DynamoDBClient({});
-          const docClient = DynamoDBDocumentClient.from(dynamoClient);
+          const client = new DynamoDBClient({});
+          const docClient = DynamoDBDocumentClient.from(client);
           const TABLE_NAME = process.env.TABLE_NAME;
           
           exports.handler = async (event) => {
             console.log('Processing', event.Records?.length, 'records');
-            for (const record of event.Records || []) {
+            const promises = [];
+            let processedCount = 0;
+            
+            for (const record of event.Records) {
               try {
-                const payload = JSON.parse(Buffer.from(record.kinesis.data, 'base64').toString());
-                if (payload.EventType === 'SEGMENTS' && payload.Segments) {
+                const payload = JSON.parse(Buffer.from(record.kinesis.data, 'base64').toString('utf-8'));
+                
+                if (payload.EventType === 'STARTED') {
+                  promises.push(docClient.send(new PutCommand({
+                    TableName: TABLE_NAME,
+                    Item: {
+                      contactId: payload.ContactId,
+                      segmentId: `${payload.ContactId}-CALL-START`,
+                      eventType: 'CALL_START',
+                      instanceId: payload.InstanceId,
+                      timestamp: new Date().toISOString(),
+                      ttl: Math.floor(Date.now() / 1000) + (24 * 60 * 60)
+                    }
+                  })));
+                  processedCount++;
+                  
+                } else if (payload.EventType === 'SEGMENTS' && payload.Segments) {
                   for (const segment of payload.Segments) {
-                    if (segment.Transcript) {
-                      const t = segment.Transcript;
-                      await docClient.send(new PutCommand({
+                    const t = segment.Transcript || segment.Utterance;
+                    
+                    if (t && t.Content) {
+                      promises.push(docClient.send(new PutCommand({
                         TableName: TABLE_NAME,
                         Item: {
                           contactId: payload.ContactId,
-                          segmentId: `${t.BeginOffsetMillis || 0}`,
-                          timestamp: new Date().toISOString(),
+                          segmentId: t.Id,
                           participantRole: t.ParticipantRole || 'UNKNOWN',
-                          content: t.Content || '',
-                          sentiment: t.Sentiment || 'NEUTRAL'
+                          participantId: t.ParticipantId || t.ParticipantRole || 'UNKNOWN',
+                          content: t.Content,
+                          sentiment: t.Sentiment || 'NEUTRAL',
+                          timestamp: new Date().toISOString(),
+                          beginOffsetMillis: t.BeginOffsetMillis,
+                          endOffsetMillis: t.EndOffsetMillis,
+                          instanceId: payload.InstanceId,
+                          languageCode: payload.LanguageCode,
+                          issuesDetected: t.IssuesDetected || [],
+                          ttl: Math.floor(Date.now() / 1000) + (24 * 60 * 60)
                         }
-                      }));
+                      })));
+                      processedCount++;
                     }
                   }
                 }
               } catch (error) {
-                console.error('Error:', error);
+                console.error('Error processing record:', error);
               }
             }
+            
+            await Promise.all(promises);
+            console.log(`Processed ${processedCount} records`);
             return { statusCode: 200 };
           };
 
-  # Event Source Mapping
+  # Event Source Mapping - triggers Lambda from Kinesis
   KinesisEventSourceMapping:
     Type: AWS::Lambda::EventSourceMapping
     Properties:
@@ -325,27 +178,9 @@ Resources:
       StartingPosition: LATEST
       BatchSize: 100
 
-  # IAM Policy for API Lambda
-  APILambdaPolicy:
-    Type: AWS::IAM::ManagedPolicy
-    Properties:
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Action:
-              - dynamodb:Query
-            Resource: !GetAtt TranscriptTable.Arn
-          - Effect: Allow
-            Action:
-              - sqs:SendMessage
-            Resource: !GetAtt APIHandlerDLQ.Arn
-          - Effect: Allow
-            Action:
-              - kms:Decrypt
-            Resource:
-              - !GetAtt DynamoDBKMSKey.Arn
-              - !GetAtt LambdaKMSKey.Arn
+  # ============================================================
+  # API LAYER
+  # ============================================================
 
   # IAM Role for API Lambda
   APILambdaRole:
@@ -360,9 +195,18 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - !Ref APILambdaPolicy
+      Policies:
+        - PolicyName: DynamoDBRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:GetItem
+                Resource: !GetAtt TranscriptTable.Arn
 
-  # API Lambda
+  # API Lambda - serves transcript data
   APILambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -372,10 +216,6 @@ Resources:
       Role: !GetAtt APILambdaRole.Arn
       Timeout: 30
       MemorySize: 256
-      ReservedConcurrentExecutions: 5
-      DeadLetterConfig:
-        TargetArn: !GetAtt APIHandlerDLQ.Arn
-      KmsKeyArn: !GetAtt LambdaKMSKey.Arn
       Environment:
         Variables:
           TABLE_NAME: !Ref TranscriptTable
@@ -383,8 +223,8 @@ Resources:
         ZipFile: |
           const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
           const { DynamoDBDocumentClient, QueryCommand } = require('@aws-sdk/lib-dynamodb');
-          const dynamoClient = new DynamoDBClient({});
-          const docClient = DynamoDBDocumentClient.from(dynamoClient);
+          const client = new DynamoDBClient({});
+          const docClient = DynamoDBDocumentClient.from(client);
           const TABLE_NAME = process.env.TABLE_NAME;
           const headers = {
             'Content-Type': 'application/json',
@@ -395,7 +235,7 @@ Resources:
           
           exports.handler = async (event) => {
             if (event.httpMethod === 'OPTIONS') {
-              return { statusCode: 200, headers, body: '{}' };
+              return { statusCode: 200, headers, body: '' };
             }
             try {
               const contactId = event.queryStringParameters?.contactId;
@@ -408,20 +248,19 @@ Resources:
                 ExpressionAttributeValues: { ':id': contactId },
                 ScanIndexForward: true
               }));
-              const segments = (result.Items || []).map(item => ({
+              const segments = (result.Items || [])
+                .filter(item => item.participantRole && item.content)
+                .map(item => ({
                 id: item.segmentId,
                 timestamp: item.timestamp,
                 participantRole: item.participantRole,
                 content: item.content,
                 sentiment: item.sentiment || 'NEUTRAL'
               }));
-              segments.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-              const latestTime = segments.length ? new Date(segments[segments.length - 1].timestamp) : new Date();
-              const callStatus = (new Date() - latestTime) < 300000 ? 'active' : 'ended';
               return {
                 statusCode: 200,
                 headers,
-                body: JSON.stringify({ success: true, contactId, segments, callStatus, segmentCount: segments.length })
+                body: JSON.stringify({ success: true, contactId, segments, callStatus: 'active', segmentCount: segments.length })
               };
             } catch (error) {
               console.error('Error:', error);
@@ -451,7 +290,7 @@ Resources:
       RestApiId: !Ref TranscriptAPI
       ResourceId: !Ref TranscriptResource
       HttpMethod: GET
-      AuthorizationType: AWS_IAM
+      AuthorizationType: NONE
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
@@ -469,7 +308,7 @@ Resources:
         IntegrationResponses:
           - StatusCode: 200
             ResponseParameters:
-              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+              method.response.header.Access-Control-Allow-Headers: "'*'"
               method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
               method.response.header.Access-Control-Allow-Origin: "'*'"
             ResponseTemplates:
@@ -500,7 +339,11 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${TranscriptAPI}/*/*/transcript'
 
-  # S3 Bucket
+  # ============================================================
+  # FRONTEND LAYER
+  # ============================================================
+
+  # S3 Bucket - hosts frontend (AES256 encryption for OAI compatibility)
   FrontendBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -513,24 +356,18 @@ Resources:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
-              SSEAlgorithm: aws:kms
-              KMSMasterKeyID: !Ref S3KMSKey
-            BucketKeyEnabled: true
+              SSEAlgorithm: AES256
       VersioningConfiguration:
         Status: Enabled
-      LoggingConfiguration:
-        DestinationBucketName: !Ref LoggingBucket
-        LogFilePrefix: s3-access-logs/
-      ObjectLockEnabled: false
 
   # CloudFront OAI
   CloudFrontOAI:
     Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
     Properties:
       CloudFrontOriginAccessIdentityConfig:
-        Comment: !Sub 'OAI for ${FrontendBucket}'
+        Comment: !Sub 'OAI for ${AWS::StackName}'
 
-  # S3 Bucket Policy
+  # S3 Bucket Policy - CloudFront OAI access only
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -542,46 +379,30 @@ Resources:
               AWS: !Sub 'arn:${AWS::Partition}:iam::cloudfront:user/CloudFront Origin Access Identity ${CloudFrontOAI}'
             Action: s3:GetObject
             Resource: !Sub '${FrontendBucket.Arn}/*'
-          - Sid: AllowSSLRequestsOnly
-            Effect: Deny
-            Principal: '*'
-            Action: 's3:*'
-            Resource:
-              - !GetAtt FrontendBucket.Arn
-              - !Sub '${FrontendBucket.Arn}/*'
-            Condition:
-              Bool:
-                'aws:SecureTransport': 'false'
 
   # CloudFront Distribution
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
       DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
         Origins:
           - Id: S3Origin
             DomainName: !GetAtt FrontendBucket.RegionalDomainName
             S3OriginConfig:
               OriginAccessIdentity: !Sub 'origin-access-identity/cloudfront/${CloudFrontOAI}'
-        Enabled: true
-        DefaultRootObject: index.html
-        Logging:
-          Bucket: !GetAtt LoggingBucket.DomainName
-          Prefix: cloudfront-logs/
-          IncludeCookies: false
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
-          AllowedMethods: [GET, HEAD, OPTIONS]
+          AllowedMethods: [GET, HEAD]
           CachedMethods: [GET, HEAD]
           ForwardedValues:
             QueryString: false
-            Cookies:
-              Forward: none
-          Compress: true
           MinTTL: 0
           DefaultTTL: 300
           MaxTTL: 86400
+          Compress: true
         CustomErrorResponses:
           - ErrorCode: 404
             ResponseCode: 200
@@ -589,48 +410,13 @@ Resources:
           - ErrorCode: 403
             ResponseCode: 200
             ResponsePagePath: /index.html
-        PriceClass: PriceClass_All
         ViewerCertificate:
           CloudFrontDefaultCertificate: true
-          MinimumProtocolVersion: TLSv1.2_2021
 
-  # IAM Policy for Frontend Deployment
-  FrontendDeploymentPolicy:
-    Type: AWS::IAM::ManagedPolicy
-    Properties:
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Action:
-              - s3:PutObject
-              - s3:GetObject
-            Resource:
-              - !Sub '${FrontendBucket.Arn}/*'
-              - !Sub 'arn:${AWS::Partition}:s3:::${SourceBucket}/${SourcePrefix}*'
-          - Effect: Allow
-            Action:
-              - s3:ListBucket
-            Resource:
-              - !GetAtt FrontendBucket.Arn
-              - !Sub 'arn:${AWS::Partition}:s3:::${SourceBucket}'
-          - Effect: Allow
-            Action:
-              - cloudfront:CreateInvalidation
-            Resource: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
-          - Effect: Allow
-            Action:
-              - sqs:SendMessage
-            Resource: !GetAtt FrontendDeploymentDLQ.Arn
-          - Effect: Allow
-            Action:
-              - kms:Decrypt
-              - kms:GenerateDataKey
-            Resource:
-              - !GetAtt S3KMSKey.Arn
-              - !GetAtt LambdaKMSKey.Arn
+  # ============================================================
+  # FRONTEND DEPLOYMENT (Custom Resource)
+  # ============================================================
 
-  # IAM Role for Frontend Deployment
   FrontendDeploymentRole:
     Type: AWS::IAM::Role
     Properties:
@@ -643,21 +429,37 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - !Ref FrontendDeploymentPolicy
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource:
+                  - !Sub '${FrontendBucket.Arn}/*'
+                  - !Sub 'arn:${AWS::Partition}:s3:::${SourceBucket}/${SourcePrefix}*'
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt FrontendBucket.Arn
+                  - !Sub 'arn:${AWS::Partition}:s3:::${SourceBucket}'
+              - Effect: Allow
+                Action:
+                  - cloudfront:CreateInvalidation
+                Resource: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
 
-  # Frontend Deployment Lambda
   FrontendDeploymentFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${AWS::StackName}-frontend-deployment'
+      FunctionName: !Sub '${AWS::StackName}-frontend-deploy'
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt FrontendDeploymentRole.Arn
       Timeout: 300
-      ReservedConcurrentExecutions: 1
-      DeadLetterConfig:
-        TargetArn: !GetAtt FrontendDeploymentDLQ.Arn
-      KmsKeyArn: !GetAtt LambdaKMSKey.Arn
       Code:
         ZipFile: |
           import json, boto3, urllib3
@@ -683,20 +485,10 @@ Resources:
                   src_prefix = event['ResourceProperties']['SourcePrefix']
                   region = event['ResourceProperties']['Region']
                   
-                  # Content type mapping for all Sydney files
-                  content_types = {
-                      '.html': 'text/html',
-                      '.js': 'application/javascript',
-                      '.css': 'text/css',
-                      '.map': 'application/json',
-                      '.ts': 'text/plain',
-                      '.txt': 'text/plain'
-                  }
+                  content_types = {'.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.map': 'application/json', '.ts': 'text/plain', '.txt': 'text/plain', '.json': 'application/json'}
                   
-                  # List all files in source prefix
                   response = s3.list_objects_v2(Bucket=src_bucket, Prefix=src_prefix)
                   files = [obj['Key'] for obj in response.get('Contents', []) if not obj['Key'].endswith('/')]
-                  
                   print(f"Copying {len(files)} files from {src_bucket}/{src_prefix}")
                   
                   for file_key in files:
@@ -704,52 +496,22 @@ Resources:
                       ext = '.' + file_name.split('.')[-1] if '.' in file_name else ''
                       content_type = content_types.get(ext, 'application/octet-stream')
                       
-                      # Copy file
                       obj = s3.get_object(Bucket=src_bucket, Key=file_key)
                       content = obj['Body'].read()
                       
-                      # For index.html, inject auto-reload script
-                      if file_name == 'index.html':
+                      if file_name == 'bundle.js':
                           try:
                               content_str = content.decode('utf-8')
-                              # Inject auto-reload script before closing body tag
-                              auto_reload_script = '<script>(function(){let currentContactId=null;let reloadTimer=null;function scheduleReload(){if(reloadTimer)clearTimeout(reloadTimer);console.log("[AutoReload] Scheduling reload in 5 seconds...");reloadTimer=setTimeout(()=>{console.log("[AutoReload] Reloading page...");window.location.reload();},5000);}if(window.connect&&window.connect.agent){window.connect.agent(function(agent){agent.onRefresh(function(){const contacts=agent.getContacts();if(contacts&&contacts.length>0){const contact=contacts[0];const contactId=contact.getContactId();if(contactId&&contactId!==currentContactId){console.log("[AutoReload] New contact detected:",contactId);currentContactId=contactId;scheduleReload();}}});});}})();</script>'
-                              # Insert before closing body tag
-                              if '</body>' in content_str:
-                                  content_str = content_str.replace('</body>', auto_reload_script + '</body>')
-                              else:
-                                  content_str += auto_reload_script
-                              content = content_str.encode('utf-8')
-                              print("Injected auto-reload script into index.html")
-                          except Exception as e:
-                              print(f"Warning: Could not inject auto-reload script: {e}")
-                      
-                      # For bundle.js, inject API endpoint and replace hardcoded Sydney endpoint
-                      elif file_name == 'bundle.js':
-                          try:
-                              content_str = content.decode('utf-8')
-                              # Replace hardcoded Sydney API endpoint with new endpoint
-                              content_str = content_str.replace(
-                                  'https://2k9xfh0m1h.execute-api.ap-southeast-2.amazonaws.com/prod/transcript',
-                                  api
-                              )
-                              # Also add API endpoint as global variable at start of bundle
+                              content_str = content_str.replace('https://2k9xfh0m1h.execute-api.ap-southeast-2.amazonaws.com/prod/transcript', api)
                               content_str = f'window.API_ENDPOINT="{api}";window.AWS_REGION="{region}";' + content_str
                               content = content_str.encode('utf-8')
                           except:
-                              pass  # If decode fails, copy as-is
+                              pass
                       
-                      s3.put_object(
-                          Bucket=bucket,
-                          Key=file_name,
-                          Body=content,
-                          ContentType=content_type,
-                          CacheControl='max-age=300'
-                      )
-                      print(f"Copied {file_name} with Content-Type: {content_type}")
+                      s3.put_object(Bucket=bucket, Key=file_name, Body=content, ContentType=content_type, CacheControl='max-age=300')
+                      print(f"Copied {file_name}")
                   
                   cf.create_invalidation(DistributionId=dist, InvalidationBatch={'Paths': {'Quantity': 1, 'Items': ['/*']}, 'CallerReference': str(context.aws_request_id)})
-                  
                   send(event, context, 'SUCCESS', {'Message': f'Deployed {len(files)} files'})
               except Exception as e:
                   print(f"Error: {e}")
@@ -757,13 +519,8 @@ Resources:
                   traceback.print_exc()
                   send(event, context, 'FAILED', {'Message': str(e)})
 
-  # Custom Resource
   FrontendDeployment:
     Type: Custom::FrontendDeployment
-    DependsOn:
-      - FrontendBucket
-      - CloudFrontDistribution
-      - APIDeployment
     Properties:
       ServiceToken: !GetAtt FrontendDeploymentFunction.Arn
       BucketName: !Ref FrontendBucket
@@ -772,9 +529,13 @@ Resources:
       SourceBucket: !Ref SourceBucket
       SourcePrefix: !Ref SourcePrefix
       Region: !Ref 'AWS::Region'
-      Version: '2.0'
+      Version: '1.0'
 
-  # IAM Role for Contact Lens Configuration
+  # ============================================================
+  # CONTACT LENS AUTO-CONFIGURATION (Custom Resource)
+  # Runs last - associates Kinesis stream with Contact Lens
+  # ============================================================
+
   ContactLensConfigRole:
     Type: AWS::IAM::Role
     Properties:
@@ -787,30 +548,26 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - !Ref ContactLensConfigPolicy
+      Policies:
+        - PolicyName: ConnectAndKinesis
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - connect:AssociateInstanceStorageConfig
+                  - connect:DisassociateInstanceStorageConfig
+                  - connect:ListInstanceStorageConfigs
+                Resource: !Sub 'arn:${AWS::Partition}:connect:${AWS::Region}:${AWS::AccountId}:instance/${ConnectInstanceId}'
+              - Effect: Allow
+                Action:
+                  - kinesis:DescribeStream
+                Resource: !GetAtt TranscriptStream.Arn
+              - Effect: Allow
+                Action:
+                  - iam:PutRolePolicy
+                Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/connect.amazonaws.com/*'
 
-  ContactLensConfigPolicy:
-    Type: AWS::IAM::ManagedPolicy
-    Properties:
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Action:
-              - connect:AssociateInstanceStorageConfig
-              - connect:DisassociateInstanceStorageConfig
-              - connect:ListInstanceStorageConfigs
-            Resource: !Sub 'arn:${AWS::Partition}:connect:${AWS::Region}:${AWS::AccountId}:instance/${ConnectInstanceId}'
-          - Effect: Allow
-            Action:
-              - kinesis:DescribeStream
-            Resource: !GetAtt TranscriptStream.Arn
-          - Effect: Allow
-            Action:
-              - iam:PutRolePolicy
-            Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/connect.amazonaws.com/*'
-
-  # Contact Lens Auto-Configuration Lambda
   ContactLensConfigFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -818,9 +575,7 @@ Resources:
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt ContactLensConfigRole.Arn
-      Timeout: 300
-      ReservedConcurrentExecutions: 1
-      KmsKeyArn: !GetAtt LambdaKMSKey.Arn
+      Timeout: 120
       Code:
         ZipFile: |
           import json, boto3, urllib3, time
@@ -829,152 +584,128 @@ Resources:
           http = urllib3.PoolManager()
           
           def send(event, context, status, data, physical_id=None):
-              if not physical_id:
-                  physical_id = context.log_stream_name
               body = json.dumps({
                   'Status': status,
-                  'PhysicalResourceId': physical_id,
+                  'PhysicalResourceId': physical_id or context.log_stream_name,
                   'StackId': event['StackId'],
                   'RequestId': event['RequestId'],
                   'LogicalResourceId': event['LogicalResourceId'],
                   'Data': data
               })
-              http.request('PUT', event['ResponseURL'], body=body.encode(), 
+              http.request('PUT', event['ResponseURL'], body=body.encode(),
                           headers={'content-type': '', 'content-length': str(len(body))})
-          
-          def wait_for_kinesis_stream(stream_arn, max_attempts=30):
-              """Wait for Kinesis stream to be fully available"""
-              stream_name = stream_arn.split('/')[-1]
-              for attempt in range(max_attempts):
-                  try:
-                      response = kinesis.describe_stream(StreamName=stream_name)
-                      status = response['StreamDescription']['StreamStatus']
-                      if status == 'ACTIVE':
-                          print(f"Kinesis stream is ACTIVE after {attempt + 1} attempts")
-                          return True
-                      print(f"Attempt {attempt + 1}: Stream status is {status}, waiting...")
-                      time.sleep(10)
-                  except Exception as e:
-                      print(f"Attempt {attempt + 1}: Error checking stream: {e}")
-                      time.sleep(10)
-              return False
           
           def handler(event, context):
               print(json.dumps(event))
               physical_id = event.get('PhysicalResourceId')
-              
               try:
                   instance_id = event['ResourceProperties']['InstanceId']
-                  kinesis_arn = event['ResourceProperties']['KinesisStreamArn']
+                  stream_arn = event['ResourceProperties']['StreamArn']
                   
                   if event['RequestType'] == 'Delete':
-                      if physical_id and physical_id.startswith('storage-'):
-                          association_id = physical_id.replace('storage-', '')
-                          try:
-                              connect.disassociate_instance_storage_config(
-                                  InstanceId=instance_id,
-                                  AssociationId=association_id,
-                                  ResourceType='REAL_TIME_CONTACT_ANALYSIS_VOICE_SEGMENTS'
-                              )
-                              print(f"Disassociated storage config: {association_id}")
-                          except Exception as e:
-                              print(f"Could not disassociate (may not exist): {e}")
+                      # Find and remove our association
+                      try:
+                          configs = connect.list_instance_storage_configs(
+                              InstanceId=instance_id,
+                              ResourceType='REAL_TIME_CONTACT_ANALYSIS_VOICE_SEGMENTS'
+                          )
+                          for cfg in configs.get('StorageConfigs', []):
+                              if cfg.get('KinesisStreamConfig', {}).get('StreamArn') == stream_arn:
+                                  connect.disassociate_instance_storage_config(
+                                      InstanceId=instance_id,
+                                      AssociationId=cfg['AssociationId'],
+                                      ResourceType='REAL_TIME_CONTACT_ANALYSIS_VOICE_SEGMENTS'
+                                  )
+                                  print(f"Removed association {cfg['AssociationId']}")
+                                  break
+                      except Exception as e:
+                          print(f"Delete cleanup: {e}")
                       send(event, context, 'SUCCESS', {}, physical_id)
                       return
                   
-                  # Wait for Kinesis stream to be fully available
-                  print("Waiting for Kinesis stream to be ACTIVE...")
-                  if not wait_for_kinesis_stream(kinesis_arn):
-                      send(event, context, 'FAILED', {
-                          'Message': 'Kinesis stream did not become ACTIVE in time'
-                      }, physical_id or context.log_stream_name)
-                      return
+                  # Check if already configured with our stream
+                  existing = connect.list_instance_storage_configs(
+                      InstanceId=instance_id,
+                      ResourceType='REAL_TIME_CONTACT_ANALYSIS_VOICE_SEGMENTS'
+                  )
+                  for cfg in existing.get('StorageConfigs', []):
+                      if cfg.get('KinesisStreamConfig', {}).get('StreamArn') == stream_arn:
+                          print("Already configured with our stream")
+                          send(event, context, 'SUCCESS', {'AssociationId': cfg['AssociationId']},
+                              f"assoc-{cfg['AssociationId']}")
+                          return
                   
-                  # Additional wait for AWS propagation
-                  print("Waiting 30 seconds for AWS propagation...")
-                  time.sleep(30)
-                  
-                  # Create or update - Associate Kinesis stream for Contact Lens
-                  max_retries = 5
-                  for retry in range(max_retries):
+                  # Remove any existing association first
+                  for cfg in existing.get('StorageConfigs', []):
                       try:
-                          response = connect.associate_instance_storage_config(
+                          connect.disassociate_instance_storage_config(
                               InstanceId=instance_id,
-                              ResourceType='REAL_TIME_CONTACT_ANALYSIS_VOICE_SEGMENTS',
-                              StorageConfig={
-                                  'StorageType': 'KINESIS_STREAM',
-                                  'KinesisStreamConfig': {
-                                      'StreamArn': kinesis_arn
-                                  }
-                              }
+                              AssociationId=cfg['AssociationId'],
+                              ResourceType='REAL_TIME_CONTACT_ANALYSIS_VOICE_SEGMENTS'
                           )
-                          association_id = response.get('AssociationId', 'unknown')
-                          physical_id = f"storage-{association_id}"
-                          print(f"Successfully associated Contact Lens with Kinesis: {association_id}")
-                          send(event, context, 'SUCCESS', {
-                              'Message': 'Contact Lens configured successfully',
-                              'AssociationId': association_id
-                          }, physical_id)
-                          return
-                          
-                      except connect.exceptions.ResourceNotFoundException as e:
-                          if retry < max_retries - 1:
-                              wait_time = 30 * (retry + 1)
-                              print(f"Retry {retry + 1}/{max_retries}: Stream not found, waiting {wait_time}s...")
-                              time.sleep(wait_time)
-                          else:
-                              raise
-                              
-                      except connect.exceptions.ResourceConflictException as e:
-                          print(f"Already configured: {e}")
-                          send(event, context, 'SUCCESS', {
-                              'Message': 'Already configured'
-                          }, physical_id or context.log_stream_name)
-                          return
+                          print(f"Removed old association {cfg['AssociationId']}")
+                          time.sleep(5)
+                      except Exception as e:
+                          print(f"Could not remove old association: {e}")
                   
-                  # If we get here, all retries failed
-                  send(event, context, 'FAILED', {
-                      'Message': 'Failed to associate after multiple retries'
-                  }, physical_id or context.log_stream_name)
-                      
+                  # Wait for Kinesis stream to be active
+                  stream_name = stream_arn.split('/')[-1]
+                  for i in range(12):
+                      resp = kinesis.describe_stream(StreamName=stream_name)
+                      if resp['StreamDescription']['StreamStatus'] == 'ACTIVE':
+                          break
+                      time.sleep(5)
+                  
+                  # Associate our stream
+                  time.sleep(10)  # Extra propagation wait
+                  response = connect.associate_instance_storage_config(
+                      InstanceId=instance_id,
+                      ResourceType='REAL_TIME_CONTACT_ANALYSIS_VOICE_SEGMENTS',
+                      StorageConfig={
+                          'StorageType': 'KINESIS_STREAM',
+                          'KinesisStreamConfig': {'StreamArn': stream_arn}
+                      }
+                  )
+                  aid = response.get('AssociationId', 'unknown')
+                  print(f"Associated: {aid}")
+                  send(event, context, 'SUCCESS', {'AssociationId': aid}, f"assoc-{aid}")
+                  
               except Exception as e:
                   print(f"Error: {e}")
                   import traceback
                   traceback.print_exc()
-                  send(event, context, 'FAILED', {'Message': str(e)}, 
-                      physical_id or context.log_stream_name)
+                  send(event, context, 'FAILED', {'Message': str(e)}, physical_id or context.log_stream_name)
 
-  # Custom Resource for Contact Lens Configuration
   ContactLensConfiguration:
     Type: Custom::ContactLensConfig
     DependsOn:
       - TranscriptStream
       - KinesisProcessorFunction
+      - FrontendDeployment
     Properties:
       ServiceToken: !GetAtt ContactLensConfigFunction.Arn
       InstanceId: !Ref ConnectInstanceId
-      KinesisStreamArn: !GetAtt TranscriptStream.Arn
-      Version: '2.0'
+      StreamArn: !GetAtt TranscriptStream.Arn
+      Version: '1.0'
 
+# ============================================================
+# OUTPUTS
+# ============================================================
 Outputs:
   CloudFrontURL:
     Description: Transcript viewer URL
     Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
 
   AgentWorkspaceURL:
-    Description: URL for Agent Workspace integration (embed this in Connect)
+    Description: URL for Agent Workspace integration (add as third-party app)
     Value: !Sub 'https://${CloudFrontDistribution.DomainName}?embedded=true'
-
-  CloudFrontDomainName:
-    Description: CloudFront distribution domain name
-    Value: !GetAtt CloudFrontDistribution.DomainName
 
   APIEndpoint:
     Description: API Gateway endpoint
     Value: !Sub 'https://${TranscriptAPI}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod/transcript'
 
   KinesisStreamARN:
-    Description: Kinesis Stream ARN - Configure this in Contact Lens Data Streaming
+    Description: Kinesis Stream ARN
     Value: !GetAtt TranscriptStream.Arn
 
   KinesisStreamName:
@@ -985,40 +716,6 @@ Outputs:
     Description: DynamoDB table name
     Value: !Ref TranscriptTable
 
-  DynamoDBKMSKeyId:
-    Description: KMS Key ID for DynamoDB encryption
-    Value: !Ref DynamoDBKMSKey
-
-  LambdaKMSKeyId:
-    Description: KMS Key ID for Lambda environment variable encryption
-    Value: !Ref LambdaKMSKey
-
-  S3KMSKeyId:
-    Description: KMS Key ID for S3 bucket encryption
-    Value: !Ref S3KMSKey
-
-  LoggingBucketName:
-    Description: S3 bucket for CloudFront and S3 access logs
-    Value: !Ref LoggingBucket
-
-  SecurityFeatures:
-    Description: Security features enabled in this deployment
-    Value: DynamoDB encrypted with Customer Managed KMS, Lambda env vars encrypted, S3 encrypted with KMS, CloudFront TLS 1.2, Access logging enabled, API Gateway IAM auth, SSL-only S3 access, DLQ configured, Managed IAM policies
-
-  ContactLensStatus:
-    Description: Contact Lens configuration status
-    Value: Automatically configured for real-time voice analysis
-
-  DeploymentComplete:
-    Description: Next steps
-    Value: !Sub |
-      ✅ Stack deployed successfully!
-      ✅ Contact Lens automatically configured
-      
-      To test:
-      1. Make a test call through Amazon Connect
-      2. Open the viewer: https://${CloudFrontDistribution.DomainName}
-      3. Real-time transcripts should appear during the call
-      
-      For Agent Workspace integration, use: https://${CloudFrontDistribution.DomainName}?embedded=true
-
+  FrontendBucketName:
+    Description: S3 bucket for frontend files
+    Value: !Ref FrontendBucket
