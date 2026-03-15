@@ -100,13 +100,16 @@ To display the transcript viewer inside the agent's workspace during calls:
 
 1. Log into the **AWS Console**
 2. Go to **Amazon Connect** → Click on your instance
-3. In the left menu, click **Third-party applications**
-4. Click **Add application**
-5. Fill in the details:
+3. In the left menu, click **Data Streaming**
+4. Select **Enable data Straming**, **Kinesis Stream** and from the drop down menu select the stream created that has the name of the cloudformation executed.
+5. Select **Agent Events** and from the drop down menu select the stream created that has the name of the cloudformation executed and save.
+6. In the left menu, click **Third-party applications**
+7. Click **Add application**
+8. Fill in the details:
    - **Display name**: `Transcript Viewer` (or any name you prefer)
    - **Access URL**: Paste the **AgentWorkspaceURL** from the CloudFormation Outputs tab
      - It will look like: `https://d1234abcd5678.cloudfront.net?embedded=true`
-6. Click **Save**
+9. Click **Save**
 
 The transcript viewer will now appear as a tab in the agent workspace during active calls.
 
