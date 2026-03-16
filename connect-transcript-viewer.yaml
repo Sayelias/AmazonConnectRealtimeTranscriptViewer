@@ -508,6 +508,19 @@ Resources:
                           except:
                               pass
                       
+                      if file_name == 'index.html':
+                          try:
+                              content_str = content.decode('utf-8')
+                              auto_reload = '<script>(function(){var cid=null;var tid=null;function check(){try{if(window.connect&&window.connect.agent){window.connect.agent(function(a){var cs=a.getContacts();if(cs&&cs.length>0){var id=cs[0].getContactId();if(id&&id!==cid){cid=id;if(tid)clearTimeout(tid);tid=setTimeout(function(){window.location.reload();},3000);}}});}}catch(e){}}setInterval(check,2000);})();</script>'
+                              if '</body>' in content_str:
+                                  content_str = content_str.replace('</body>', auto_reload + '</body>')
+                              else:
+                                  content_str += auto_reload
+                              content = content_str.encode('utf-8')
+                              print("Injected auto-reload script into index.html")
+                          except Exception as e:
+                              print(f"Warning: Could not inject auto-reload: {e}")
+                      
                       s3.put_object(Bucket=bucket, Key=file_name, Body=content, ContentType=content_type, CacheControl='max-age=300')
                       print(f"Copied {file_name}")
                   
@@ -529,7 +542,7 @@ Resources:
       SourceBucket: !Ref SourceBucket
       SourcePrefix: !Ref SourcePrefix
       Region: !Ref 'AWS::Region'
-      Version: '1.0'
+      Version: '2.0'
 
   # ============================================================
   # CONTACT LENS AUTO-CONFIGURATION (Custom Resource)
@@ -719,3 +732,4 @@ Outputs:
   FrontendBucketName:
     Description: S3 bucket for frontend files
     Value: !Ref FrontendBucket
+
