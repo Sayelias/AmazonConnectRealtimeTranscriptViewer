@@ -511,11 +511,7 @@ Resources:
                       if file_name == 'index.html':
                           try:
                               content_str = content.decode('utf-8')
-                              # Inject refresh bar and auto-reload
-                              refresh_bar = '<div id="refresh-bar" style="height:36px;display:flex;align-items:center;justify-content:flex-end;padding:0 12px;background:#232f3e;"><button id="refresh-btn" onclick="window.location.reload()" title="Refresh dashboard" style="background:#0972d3;color:#fff;border:none;border-radius:6px;padding:4px 14px;font-size:13px;font-family:inherit;cursor:pointer;display:flex;align-items:center;gap:6px;"><svg viewBox=&quot;0 0 16 16&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;2&quot; style=&quot;width:14px;height:14px&quot;><path d=&quot;M1 1v5h5&quot;/><path d=&quot;M2.5 10.5a6 6 0 1 0 1-5L1 6&quot;/></svg>Refresh</button></div>'
-                              # Add refresh bar before root div and adjust root height
-                              content_str = content_str.replace('height: 100vh', 'height: calc(100vh - 36px)')
-                              content_str = content_str.replace('<div id="root">', refresh_bar + '<div id="root">')
+                              # Auto-reload script only (refresh bar is already in the source HTML)
                               auto_reload = '''<script>
           (function(){
             var INITIAL_GRACE=15000,CHECK_INTERVAL=10000,STALE_THRESHOLD=30000,MAX_RELOADS=3;
@@ -532,7 +528,7 @@ Resources:
                               else:
                                   content_str += auto_reload
                               content = content_str.encode('utf-8')
-                              print("Injected refresh bar and auto-reload script into index.html")
+                              print("Injected auto-reload script into index.html")
                           except Exception as e:
                               print(f"Warning: Could not inject into index.html: {e}")
                       
