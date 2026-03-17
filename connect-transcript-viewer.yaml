@@ -511,15 +511,30 @@ Resources:
                       if file_name == 'index.html':
                           try:
                               content_str = content.decode('utf-8')
-                              auto_reload = '<script>(function(){var cid=null;var tid=null;function check(){try{if(window.connect&&window.connect.agent){window.connect.agent(function(a){var cs=a.getContacts();if(cs&&cs.length>0){var id=cs[0].getContactId();if(id&&id!==cid){cid=id;if(tid)clearTimeout(tid);tid=setTimeout(function(){window.location.reload();},3000);}}});}}catch(e){}}setInterval(check,2000);})();</script>'
+                              # Inject refresh bar and auto-reload
+                              refresh_bar = '<div id="refresh-bar" style="height:36px;display:flex;align-items:center;justify-content:flex-end;padding:0 12px;background:#232f3e;"><button id="refresh-btn" onclick="window.location.reload()" title="Refresh dashboard" style="background:#0972d3;color:#fff;border:none;border-radius:6px;padding:4px 14px;font-size:13px;font-family:inherit;cursor:pointer;display:flex;align-items:center;gap:6px;"><svg viewBox=&quot;0 0 16 16&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;2&quot; style=&quot;width:14px;height:14px&quot;><path d=&quot;M1 1v5h5&quot;/><path d=&quot;M2.5 10.5a6 6 0 1 0 1-5L1 6&quot;/></svg>Refresh</button></div>'
+                              # Add refresh bar before root div and adjust root height
+                              content_str = content_str.replace('height: 100vh', 'height: calc(100vh - 36px)')
+                              content_str = content_str.replace('<div id="root">', refresh_bar + '<div id="root">')
+                              auto_reload = '''<script>
+          (function(){
+            var INITIAL_GRACE=15000,CHECK_INTERVAL=10000,STALE_THRESHOLD=30000,MAX_RELOADS=3;
+            var RK='_transcript_auto_reloads',CK='_transcript_last_seen';
+            function has(){var r=document.getElementById('root');if(!r)return false;var t=r.innerText||'';if(t.indexOf('AGENT')!==-1||t.indexOf('CUSTOMER')!==-1)return true;if(r.querySelectorAll('[class*="segment"],[class*="message"],[class*="chat"]').length>3)return true;return false;}
+            function grc(){try{var d=JSON.parse(sessionStorage.getItem(RK)||'{}');if(d.ts&&(Date.now()-d.ts>120000))return 0;return d.count||0;}catch(e){return 0;}}
+            function src(n){try{sessionStorage.setItem(RK,JSON.stringify({count:n,ts:Date.now()}));}catch(e){}}
+            var es=null;
+            setTimeout(function(){setInterval(function(){if(has()){es=null;src(0);try{sessionStorage.setItem(CK,String(Date.now()));}catch(e){}return;}if(!es){es=Date.now();return;}var el=Date.now()-es;if(el>=STALE_THRESHOLD){var rc=grc();if(rc<MAX_RELOADS){console.log('[auto-reload] No transcript for '+(el/1000|0)+'s, reloading ('+(rc+1)+'/'+MAX_RELOADS+')');src(rc+1);window.location.reload();}}},CHECK_INTERVAL);},INITIAL_GRACE);
+          })();
+          </script>'''
                               if '</body>' in content_str:
                                   content_str = content_str.replace('</body>', auto_reload + '</body>')
                               else:
                                   content_str += auto_reload
                               content = content_str.encode('utf-8')
-                              print("Injected auto-reload script into index.html")
+                              print("Injected refresh bar and auto-reload script into index.html")
                           except Exception as e:
-                              print(f"Warning: Could not inject auto-reload: {e}")
+                              print(f"Warning: Could not inject into index.html: {e}")
                       
                       s3.put_object(Bucket=bucket, Key=file_name, Body=content, ContentType=content_type, CacheControl='max-age=300')
                       print(f"Copied {file_name}")
