@@ -250,6 +250,12 @@ Resources:
               }));
               const segments = (result.Items || [])
                 .filter(item => item.participantRole && item.content)
+                .sort((a, b) => {
+                  if (a.beginOffsetMillis != null && b.beginOffsetMillis != null) {
+                    return a.beginOffsetMillis - b.beginOffsetMillis;
+                  }
+                  return (a.timestamp || '').localeCompare(b.timestamp || '');
+                })
                 .map(item => ({
                 id: item.segmentId,
                 timestamp: item.timestamp,
@@ -487,12 +493,18 @@ Resources:
                   
                   content_types = {'.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.map': 'application/json', '.ts': 'text/plain', '.txt': 'text/plain', '.json': 'application/json'}
                   
+                  # Skip CSS files that conflict with theme toggle
+                  skip_files = ['force-dark.css', 'theme-toggle-switch.css']
+                  
                   response = s3.list_objects_v2(Bucket=src_bucket, Prefix=src_prefix)
                   files = [obj['Key'] for obj in response.get('Contents', []) if not obj['Key'].endswith('/')]
                   print(f"Copying {len(files)} files from {src_bucket}/{src_prefix}")
                   
                   for file_key in files:
                       file_name = file_key.replace(src_prefix, '')
+                      if file_name in skip_files:
+                          print(f"Skipping {file_name} (conflicts with theme toggle)")
+                          continue
                       ext = '.' + file_name.split('.')[-1] if '.' in file_name else ''
                       content_type = content_types.get(ext, 'application/octet-stream')
                       
@@ -503,34 +515,25 @@ Resources:
                           try:
                               content_str = content.decode('utf-8')
                               content_str = content_str.replace('https://2k9xfh0m1h.execute-api.ap-southeast-2.amazonaws.com/prod/transcript', api)
+                              # Patch dark mode initial state to read from localStorage instead of hardcoded true
+                              # The React component has: [v,m]=(0,i.useState)(!0) where !0 = true = dark mode always
+                              # Replace with a check that reads the saved theme preference
                               content_str = f'window.API_ENDPOINT="{api}";window.AWS_REGION="{region}";' + content_str
+                              # Patch dark mode initial state to read from localStorage instead of hardcoded true
+                              content_str = content_str.replace(
+                                  'useState)(null),[v,m]=(0,i.useState)(!0)',
+                                  'useState)(null),[v,m]=(0,i.useState)(!(localStorage.getItem("awsui-theme")==="light"))'
+                              )
+                              # Patch the toggle onChange to persist theme choice to localStorage
+                              content_str = content_str.replace(
+                                  'onChange:({detail:e})=>m(e.checked)',
+                                  'onChange:({detail:e})=>{m(e.checked);localStorage.setItem("awsui-theme",e.checked?"dark":"light");localStorage.setItem("theme",e.checked?"dark":"light");if(e.checked){document.documentElement.classList.add("awsui-dark-mode");document.documentElement.setAttribute("data-awsui-theme","dark")}else{document.documentElement.classList.remove("awsui-dark-mode");document.documentElement.setAttribute("data-awsui-theme","light")}}'
+                              )
                               content = content_str.encode('utf-8')
                           except:
                               pass
                       
-                      if file_name == 'index.html':
-                          try:
-                              content_str = content.decode('utf-8')
-                              # Auto-reload script only (refresh bar is already in the source HTML)
-                              auto_reload = '''<script>
-          (function(){
-            var INITIAL_GRACE=15000,CHECK_INTERVAL=10000,STALE_THRESHOLD=30000,MAX_RELOADS=3;
-            var RK='_transcript_auto_reloads',CK='_transcript_last_seen';
-            function has(){var r=document.getElementById('root');if(!r)return false;var t=r.innerText||'';if(t.indexOf('AGENT')!==-1||t.indexOf('CUSTOMER')!==-1)return true;if(r.querySelectorAll('[class*="segment"],[class*="message"],[class*="chat"]').length>3)return true;return false;}
-            function grc(){try{var d=JSON.parse(sessionStorage.getItem(RK)||'{}');if(d.ts&&(Date.now()-d.ts>120000))return 0;return d.count||0;}catch(e){return 0;}}
-            function src(n){try{sessionStorage.setItem(RK,JSON.stringify({count:n,ts:Date.now()}));}catch(e){}}
-            var es=null;
-            setTimeout(function(){setInterval(function(){if(has()){es=null;src(0);try{sessionStorage.setItem(CK,String(Date.now()));}catch(e){}return;}if(!es){es=Date.now();return;}var el=Date.now()-es;if(el>=STALE_THRESHOLD){var rc=grc();if(rc<MAX_RELOADS){console.log('[auto-reload] No transcript for '+(el/1000|0)+'s, reloading ('+(rc+1)+'/'+MAX_RELOADS+')');src(rc+1);window.location.reload();}}},CHECK_INTERVAL);},INITIAL_GRACE);
-          })();
-          </script>'''
-                              if '</body>' in content_str:
-                                  content_str = content_str.replace('</body>', auto_reload + '</body>')
-                              else:
-                                  content_str += auto_reload
-                              content = content_str.encode('utf-8')
-                              print("Injected auto-reload script into index.html")
-                          except Exception as e:
-                              print(f"Warning: Could not inject into index.html: {e}")
+                      # index.html already contains auto-reload script and theme loader, no injection needed
                       
                       s3.put_object(Bucket=bucket, Key=file_name, Body=content, ContentType=content_type, CacheControl='max-age=300')
                       print(f"Copied {file_name}")
